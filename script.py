@@ -74,44 +74,54 @@ def computer_bet(computer_chips, player_bet_amount, min_bet):
     elif action == 'fold':
         bet_amount = 0
         print("Computer folds.")
-    return bet_amount, 'continue'
+    return bet_amount, 'end_round'
 
 #betting round logic 
-def betting_round(deck, player_chips, computer_chips, min_bet):
+def betting_round(deck, player_chips, computer_chips, pot, min_bet):
     player_bet_amount, player_status = player_bet(player_chips, min_bet)
     if player_status == 'fold':
         print("Player folds. Computer wins the round.")
-        return 0, player_chips, computer_chips + player_bet_amount, 'end_round'  # Ensure chips are updated and round ends
+        return pot, player_chips, computer_chips + player_bet_amount, 'end_round'
 
     computer_bet_amount, computer_status = computer_bet(computer_chips, player_bet_amount, min_bet)
     if computer_status == 'fold':
         print("Computer folds. Player wins the round.")
-        return 0, player_chips + computer_bet_amount, computer_chips, 'end_round'  # Ensure chips are updated and round ends
+        return pot, player_chips + computer_bet_amount, computer_chips, 'end_round'
 
-    pot = player_bet_amount + computer_bet_amount
+    if player_status != 'all_in' and computer_status != 'all_in':
+        pot += player_bet_amount + computer_bet_amount
+
     player_chips -= player_bet_amount
     computer_chips -= computer_bet_amount
+
     return pot, player_chips, computer_chips, 'continue'
+
 
 
 def deal_community_cards(deck, count):
     community_cards, deck = deal_cards(deck, count)
-    print(f"Community Cards: {community_cards}")
+
     return community_cards, deck
 
 def determine_winner(player_hand, computer_hand, community_cards):
     evaluator = Evaluator()
     
-    # Convert hand and community cards from string to card format
-    player_hand_cards = [Card.new(card) for card in player_hand]
-    computer_hand_cards = [Card.new(card) for card in computer_hand]
-    community_cards = [Card.new(card) for card in community_cards]
+    # Nested function to convert card dictionary to a Treys-compatible string
+    def card_from_dict(card):
+        value_map = {'2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8', '9': '9', '10': 'T', 'Jack': 'J', 'Queen': 'Q', 'King': 'K', 'Ace': 'A'}
+        suit_map = {'Hearts': 'h', 'Diamonds': 'd', 'Clubs': 'c', 'Spades': 's'}
+        return Card.new(value_map[card['value']] + suit_map[card['suit']])
+
+    # Convert hands and community cards from dict format to Treys Card format
+    player_hand_cards = [card_from_dict(card) for card in player_hand]
+    computer_hand_cards = [card_from_dict(card) for card in computer_hand]
+    community_card_objs = [card_from_dict(card) for card in community_cards]
 
     # Evaluate hands
-    player_score = evaluator.evaluate(community_cards, player_hand_cards)
-    computer_score = evaluator.evaluate(community_cards, computer_hand_cards)
+    player_score = evaluator.evaluate(community_card_objs, player_hand_cards)
+    computer_score = evaluator.evaluate(community_card_objs, computer_hand_cards)
 
-    # Lower score indicates a better hand
+    # Determine winner based on scores
     if player_score < computer_score:
         return 'player'
     elif player_score > computer_score:
@@ -120,58 +130,72 @@ def determine_winner(player_hand, computer_hand, community_cards):
         return 'tie'
 
 
+
 def play_again():
     answer = input("Do you want to play another hand? (yes/no): ").lower()
     return answer == 'yes'
 
 def main():
-    deck, player_chips, computer_chips, min_bet = initialize_game()
+    # Initial chip counts
+    player_chips = 100
+    computer_chips = 100
+    min_bet = 10
     game_on = True
 
     while game_on:
+        # Create and shuffle the deck at the start of each hand
+        deck = create_deck()
+        
         player_hand, deck = deal_cards(deck, 2)
         computer_hand, deck = deal_cards(deck, 2)
         print("Your hand:", player_hand)
-        print("Your chip count:", player_chips)
+    
 
         # Initial betting round
-        pot, player_chips, computer_chips, game_status = betting_round(deck, player_chips, computer_chips, min_bet)
+        pot = 0
+        pot, player_chips, computer_chips, game_status = betting_round(deck, player_chips, computer_chips, pot, min_bet)
+        print(f"Pot after initial bets: {pot}")
 
-        if game_status == 'end_round':
+        community_cards = []
+        if game_status in ['continue', 'all_in']:
+            # Deal and manage community cards for each round only if the game continues
+            for round_name, card_count in [('Flop', 3), ('Turn', 1), ('River', 1)]:
+                if game_status in ['continue', 'all_in']:
+                    new_cards, deck = deal_community_cards(deck, card_count)
+                    community_cards.extend(new_cards)
+                    print(f"{round_name}: {new_cards}")
+                    if game_status == 'continue':  # No betting if all in
+                        pot, player_chips, computer_chips, game_status = betting_round(deck, player_chips, computer_chips, pot, min_bet)
+                        print(f"Pot after {round_name}: {pot}")
+
+        if game_status in ['continue', 'all_in']:
+            # Determine and announce the winner
+            winner = determine_winner(player_hand, computer_hand, community_cards)
+            if winner == 'player':
+                player_chips += pot
+                print(f"You win the pot of {pot}!")
+            elif winner == 'computer':
+                computer_chips += pot
+                print(f"Computer wins the pot of {pot}!")
+            else:
+                split_pot = pot // 2
+                player_chips += split_pot
+                computer_chips += split_pot
+                print(f"It's a tie! Pot of {pot} is split.")
+
+        # Check if either player's chips have run out
+        if player_chips <= 0 or computer_chips <= 0:
+            game_on = False
+            winner = "player" if computer_chips <= 0 else "computer"
+            print(f"Game over - the winner is: {winner}")
+        else:
+            # Ask if the players want to play another hand
             if not play_again():
                 game_on = False
                 print("Thanks for playing!")
-            continue
-
-        # Community cards and subsequent betting rounds are only dealt if the game status is 'continue'
-        if game_status == 'continue':
-            flop, deck = deal_community_cards(deck, 3)
-            pot, player_chips, computer_chips, game_status = betting_round(deck, player_chips, computer_chips, min_bet)
-
-            if game_status == 'continue':
-                turn, deck = deal_community_cards(deck, 1)
-                pot, player_chips, computer_chips, game_status = betting_round(deck, player_chips, computer_chips, min_bet)
-
-            if game_status == 'continue':
-                river, deck = deal_community_cards(deck, 1)
-                pot, player_chips, computer_chips, game_status = betting_round(deck, player_chips, computer_chips, min_bet)
-
-                if game_status == 'continue':
-                    winner = determine_winner(player_hand, computer_hand, flop + turn + river)
-                    if winner == 'player':
-                        player_chips += pot
-                        print("You win the pot!")
-                    elif winner == 'computer':
-                        computer_chips += pot
-                        print("Computer wins the pot!")
-                    else:
-                        player_chips += pot / 2
-                        computer_chips += pot / 2
-                        print("It's a tie!")
-
-        if not play_again():
-            game_on = False
-            print("Thanks for playing!")
 
 if __name__ == "__main__":
     main()
+
+
+
